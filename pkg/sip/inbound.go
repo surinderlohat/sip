@@ -403,6 +403,14 @@ func (s *Server) processInvite(req *sip.Request, tx sip.ServerTransaction) (retE
 	}
 	rheaders := cc.RemoteHeaders()
 	s.handler.OnInboundInfo(log, callInfo, rheaders)
+	log.Debugw("Inbound auth request context",
+		"sourceIP", callInfo.SourceIp,
+		"fromUser", callInfo.From.User,
+		"fromHost", callInfo.From.Host,
+		"toUser", callInfo.To.User,
+		"toHost", callInfo.To.Host,
+		"ruriHost", callInfo.Address.Host,
+	)
 	for _, h := range rheaders {
 		switch h := h.(type) {
 		case *sip.ViaHeader:
@@ -430,11 +438,20 @@ func (s *Server) processInvite(req *sip.Request, tx sip.ServerTransaction) (retE
 	}
 	log.Debugw("Inbound auth decision",
 		"authResult", authResultName(r.Result),
+		"projectID", r.ProjectID,
+		"trunkID", r.TrunkID,
 		"hasProject", r.ProjectID != "",
 		"hasTrunk", r.TrunkID != "",
 		"hasUsername", r.Username != "",
 		"hasPassword", r.Password != "",
 	)
+	if r.Result == AuthAccept && r.TrunkID == "" {
+		log.Warnw("Inbound auth accepted without trunk ID", nil,
+			"projectID", r.ProjectID,
+			"from", cc.From().String(),
+			"to", cc.To().String(),
+		)
+	}
 
 	state = NewCallState(s.getIOClient(r.ProjectID), &livekit.SIPCallInfo{
 		CallId:        string(cc.ID()),
@@ -726,12 +743,21 @@ func (c *inboundCall) handleInvite(ctx context.Context, tid traceid.ID, req *sip
 	c.cc.StartRinging()
 	// Send initial request. In the best case scenario, we will immediately get a room name to join.
 	// Otherwise, we could even learn that this number is not allowed and reject the call, or ask for pin if required.
-	disp := c.s.handler.DispatchCall(ctx, &CallInfo{
+	dispatchReq := &CallInfo{
 		TrunkID: trunkID,
 		Call:    c.call,
 		Pin:     "",
 		NoPin:   false,
-	})
+	}
+	c.log().Debugw("Dispatching inbound call",
+		"trunkID", dispatchReq.TrunkID,
+		"fromUser", dispatchReq.Call.From.User,
+		"fromHost", dispatchReq.Call.From.Host,
+		"toUser", dispatchReq.Call.To.User,
+		"toHost", dispatchReq.Call.To.Host,
+		"sourceIP", dispatchReq.Call.SourceIp,
+	)
+	disp := c.s.handler.DispatchCall(ctx, dispatchReq)
 	if disp.ProjectID != "" {
 		c.appendLogValues("projectID", disp.ProjectID)
 		c.projectID = disp.ProjectID
@@ -777,8 +803,12 @@ func (c *inboundCall) handleInvite(ctx context.Context, tid traceid.ID, req *sip
 	case DispatchNoRuleDrop:
 		c.log().Debugw("Rejecting inbound flood",
 			"dispatchResult", dispatchResultName(disp.Result),
+			"projectID", disp.ProjectID,
 			"trunkID", disp.TrunkID,
 			"dispatchRuleID", disp.DispatchRuleID,
+			"callFrom", c.call.From.String(),
+			"callTo", c.call.To.String(),
+			"sourceIP", c.call.SourceIp,
 		)
 		c.cc.Drop()
 		c.close(ctx, false, callFlood, "flood")
