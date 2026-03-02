@@ -81,6 +81,40 @@ func hashPassword(password string) string {
 	return hex.EncodeToString(hash[:8]) // Use first 8 bytes for shorter hash
 }
 
+func authResultName(r AuthResult) string {
+	switch r {
+	case AuthNotFound:
+		return "not-found"
+	case AuthDrop:
+		return "drop"
+	case AuthPassword:
+		return "password"
+	case AuthAccept:
+		return "accept"
+	case AuthQuotaExceeded:
+		return "quota-exceeded"
+	case AuthNoTrunkFound:
+		return "no-trunk-found"
+	default:
+		return fmt.Sprintf("unknown(%d)", r)
+	}
+}
+
+func dispatchResultName(r DispatchResult) string {
+	switch r {
+	case DispatchAccept:
+		return "accept"
+	case DispatchRequestPin:
+		return "request-pin"
+	case DispatchNoRuleReject:
+		return "no-rule-reject"
+	case DispatchNoRuleDrop:
+		return "no-rule-drop"
+	default:
+		return fmt.Sprintf("unknown(%d)", r)
+	}
+}
+
 type inboundCallInfo struct {
 	sync.Mutex
 	cseq        uint32
@@ -394,6 +428,13 @@ func (s *Server) processInvite(req *sip.Request, tx sip.ServerTransaction) (retE
 	if r.TrunkID != "" {
 		log = log.WithValues("sipTrunk", r.TrunkID)
 	}
+	log.Debugw("Inbound auth decision",
+		"authResult", authResultName(r.Result),
+		"hasProject", r.ProjectID != "",
+		"hasTrunk", r.TrunkID != "",
+		"hasUsername", r.Username != "",
+		"hasPassword", r.Password != "",
+	)
 
 	state = NewCallState(s.getIOClient(r.ProjectID), &livekit.SIPCallInfo{
 		CallId:        string(cc.ID()),
@@ -412,7 +453,10 @@ func (s *Server) processInvite(req *sip.Request, tx sip.ServerTransaction) (retE
 	switch r.Result {
 	case AuthDrop:
 		cmon.InviteErrorShort("flood")
-		log.Debugw("Dropping inbound flood")
+		log.Debugw("Dropping inbound flood",
+			"authResult", authResultName(r.Result),
+			"sipCallID", cc.SIPCallID(),
+		)
 		cc.Drop()
 		return psrpc.NewErrorf(psrpc.PermissionDenied, "call was not authorized by trunk configuration")
 	case AuthNotFound:
@@ -698,6 +742,14 @@ func (c *inboundCall) handleInvite(ctx context.Context, tid traceid.ID, req *sip
 	if disp.DispatchRuleID != "" {
 		c.appendLogValues("sipRule", disp.DispatchRuleID)
 	}
+	c.log().Debugw("Inbound dispatch decision",
+		"dispatchResult", dispatchResultName(disp.Result),
+		"roomName", disp.Room.RoomName,
+		"participantIdentity", disp.Room.Participant.Identity,
+		"ringingTimeout", disp.RingingTimeout.String(),
+		"maxCallDuration", disp.MaxCallDuration.String(),
+		"enabledFeatures", disp.EnabledFeatures,
+	)
 
 	c.state.Update(ctx, func(info *livekit.SIPCallInfo) {
 		info.TrunkId = disp.TrunkID
@@ -723,7 +775,11 @@ func (c *inboundCall) handleInvite(ctx context.Context, tid traceid.ID, req *sip
 		c.close(ctx, true, callDropped, "unexpected-result")
 		return psrpc.NewError(psrpc.Unimplemented, err)
 	case DispatchNoRuleDrop:
-		c.log().Debugw("Rejecting inbound flood")
+		c.log().Debugw("Rejecting inbound flood",
+			"dispatchResult", dispatchResultName(disp.Result),
+			"trunkID", disp.TrunkID,
+			"dispatchRuleID", disp.DispatchRuleID,
+		)
 		c.cc.Drop()
 		c.close(ctx, false, callFlood, "flood")
 		return psrpc.NewErrorf(psrpc.PermissionDenied, "call was not authorized by trunk configuration")
@@ -1104,6 +1160,12 @@ func (c *inboundCall) pinPrompt(ctx context.Context, trunkID string) (disp CallD
 				if disp.DispatchRuleID != "" {
 					c.appendLogValues("sipRule", disp.DispatchRuleID)
 				}
+				c.log().Debugw("Inbound dispatch decision after pin",
+					"dispatchResult", dispatchResultName(disp.Result),
+					"roomName", disp.Room.RoomName,
+					"participantIdentity", disp.Room.Participant.Identity,
+					"noPin", noPin,
+				)
 				if disp.Result != DispatchAccept || disp.Room.RoomName == "" {
 					c.log().Infow("Rejecting call", "pin", pin, "noPin", noPin)
 					c.playAudio(ctx, c.s.res.wrongPin)
