@@ -262,5 +262,14 @@ func (s *Service) OnInboundInfo(log logger.Logger, callInfo *rpc.SIPCall, header
 }
 
 func (s *Service) OnSessionEnd(ctx context.Context, callIdentifier *sip.CallIdentifier, callInfo *livekit.SIPCallInfo, reason string) {
+	s.log.Debugw("SIP call end context",
+		"callID", callInfo.CallId,
+		"reason", reason,
+		"clusterID", s.conf.ClusterID,
+		"hideInboundPort", s.conf.HideInboundPort,
+		"inboundWaitACK", s.conf.Experimental.InboundWaitACK,
+		"useExternalIP", s.conf.UseExternalIP,
+		"mediaUseExternalIP", s.conf.MediaUseExternalIP,
+	)
 	s.log.Infow("SIP call ended", "callID", callInfo.CallId, "reason", reason)
 }

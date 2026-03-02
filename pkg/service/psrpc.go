@@ -27,6 +27,15 @@ func GetAuthCredentials(ctx context.Context, psrpcClient rpc.IOInfoClient, call 
 	if err != nil {
 		return sip.AuthInfo{}, err
 	}
+	logger.Debugw("GetSIPTrunkAuthentication response",
+		"sipCallID", call.LkCallId,
+		"projectID", resp.ProjectId,
+		"trunkID", resp.SipTrunkId,
+		"drop", resp.Drop,
+		"hasUsername", resp.Username != "",
+		"hasPassword", resp.Password != "",
+		"errorCode", resp.ErrorCode.String(),
+	)
 
 	// Handle specific authentication error codes
 	switch resp.ErrorCode {
@@ -90,6 +99,14 @@ func DispatchCall(ctx context.Context, psrpcClient rpc.IOInfoClient, log logger.
 		log.Warnw("SIP handle dispatch rule error", err)
 		return sip.CallDispatch{Result: sip.DispatchNoRuleReject}
 	}
+	log.Debugw("EvaluateSIPDispatchRules response",
+		"sipCallID", info.Call.LkCallId,
+		"result", resp.Result.String(),
+		"projectID", resp.ProjectId,
+		"trunkID", resp.SipTrunkId,
+		"dispatchRuleID", resp.SipDispatchRuleId,
+		"requestPin", resp.RequestPin,
+	)
 	switch resp.Result {
 	default:
 		log.Errorw("SIP handle dispatch rule error", fmt.Errorf("unexpected dispatch result: %v", resp.Result))
